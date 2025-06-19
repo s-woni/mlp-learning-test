@@ -3,7 +3,7 @@ import joblib
 import json
 import pandas as pd
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 MODEL_PATH = "mlp_single_custom.pkl"
@@ -95,23 +95,34 @@ def upload_model():
     if not file:
         return jsonify({"error": "파일이 없습니다."}), 400
 
-    # 1. 버전용 파일명으로 저장 (날짜 기반)
-    now_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    versioned_path = f"models/mlp_model_{now_str}.pkl"
+    # 1. 모델 저장
+    now = datetime.now()
+    now_str = now.strftime("%Y-%m-%d_%H-%M-%S")
     os.makedirs("models", exist_ok=True)
+    versioned_path = f"models/mlp_model_{now_str}.pkl"
     file.save(versioned_path)
 
-    # 2. 최신 모델 복사 (또는 심볼릭 링크)
-    latest_path = MODEL_PATH  # "mlp_single_custom.pkl"
+    # 2. 최신 모델로 복사
     import shutil
-    shutil.copy(versioned_path, latest_path)
-
-    # 3. 모델 리로드
+    shutil.copy(versioned_path, MODEL_PATH)
     reload_model()
+
+    # 3. 5분 지난 파일 삭제(한달정도로 바꿀 예정)
+    delete_threshold = now - timedelta(minutes=5)
+    deleted_files = []
+
+    for filename in os.listdir("models"):
+        filepath = os.path.join("models", filename)
+        if filepath.endswith(".pkl"):
+            modified_time = datetime.fromtimestamp(os.path.getmtime(filepath))
+            if modified_time < delete_threshold:
+                os.remove(filepath)
+                deleted_files.append(filename)
 
     return jsonify({
         "message": "모델 업로드 및 리로드 완료",
-        "saved_as": versioned_path
+        "saved_as": versioned_path,
+        "deleted_old_files": deleted_files
     }), 200
 
 if __name__ == "__main__":
