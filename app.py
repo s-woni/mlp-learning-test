@@ -86,7 +86,8 @@ def predict_all():
 def reload_model():
     global model_pipe
     model_pipe = joblib.load(MODEL_PATH)
-    print("[Flask] 모델 리로드 완료")
+    modified = os.path.getmtime(MODEL_PATH)
+    print(f"[Flask] 모델 리로드 완료 - 모델 수정 시각: {datetime.fromtimestamp(modified).strftime('%Y-%m-%d %H:%M:%S')}")
 
 # 모델 업로드 엔드포인트
 @app.route("/upload", methods=["POST"])
