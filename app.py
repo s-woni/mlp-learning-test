@@ -4,76 +4,78 @@ import joblib, json, pandas as pd
 app = Flask(__name__)
 model_pipe = joblib.load("mlp_single_custom.pkl")
 
-def make_feature_row(payload):
-    # payload: {"stage":int, "model_type":str, "option_list":str|list}
-    stage      = int(payload["stage"])
-    model_type = payload["model_type"]
-    opts       = payload.get("option_list", "[]")
-    if isinstance(opts, str):
-        opts = json.loads(opts)
+# 모델+공정별 평균 유통시간
+avg_delay_dict = {
+    ('ICE', 2): 22.3688,   ('ICE', 3): 17.3992,   ('ICE', 4): 15.981,    ('ICE', 5): 16.0512,
+    ('HEV', 2): 22.4633,   ('HEV', 3): 17.2794,   ('HEV', 4): 15.7819,   ('HEV', 5): 14.8167,
+    ('EV',  2): 22.5549,   ('EV',  3): 16.5231,   ('EV',  4): 16.1131,   ('EV',  5): 16.9977,
+}
 
-    # model_type 원-핫, stage 원-핫
+def make_feature_row(stage, model_type, option_list):
+    if isinstance(option_list, str):
+        option_list = json.loads(option_list)
+
     row = {}
-    for m in ["ICE","HEV","EV"]:
-        row[f"model_type_{m}"] = 1 if model_type == m else 0
-    for s in range(1,6):
-        row[f"stage_{s}"] = 1 if stage == s else 0
+    for m in ["ICE", "HEV", "EV"]:
+        row[f"model_type_{m}"] = int(model_type == m)
+    for s in range(1, 6):
+        row[f"stage_{s}"] = int(stage == s)
+    for i in range(1, 6):
+        row[f"opt_{i}_only4"] = int(stage == 4 and i in option_list)
 
-    # 옵션은 오직 4단계에만
-    for i in range(1,6):
-        row[f"opt_{i}_only4"] = 1 if (stage == 4 and i in opts) else 0
-
-    return pd.Series(row)
-
-@app.route("/predict", methods=["POST"])
-def predict():
-    payload = request.get_json()
-    X       = make_feature_row(payload).to_frame().T
-    pred    = float(model_pipe.predict(X)[0])
-    return jsonify({
-        "stage":           payload["stage"],
-        "model_type":      payload["model_type"],
-        "pred_duration_h": round(pred, 3)
-    })
+    return row
 
 @app.route("/predict_all", methods=["POST"])
 def predict_all():
-    data       = request.get_json()
+    """
+    요청 JSON:
+    {
+      "model_type": "ICE",
+      "option_list": "[1,2,3]"
+    }
+    """
+    data = request.get_json()
     model_type = data["model_type"]
-    opts       = data.get("option_list", "[]")
+    option_list = data.get("option_list", "[]")
+    if isinstance(option_list, str):
+        option_list = json.loads(option_list)
 
-    # 각 stage별 feature row 만들기
-    rows = []
-    for s in range(1,6):
-        payload = {
-            "stage":        s,
-            "model_type":   model_type,
-            "option_list":  opts
-        }
-        # make_feature_row → pandas.Series
-        rows.append(make_feature_row(payload))
-    df_feat = pd.DataFrame(rows)
+    # 전체 공정 1~5에 대한 예측
+    rows = [make_feature_row(stage, model_type, option_list) for stage in range(1, 6)]
+    df = pd.DataFrame(rows)
 
-    # 누락 컬럼 보정 (train 때 쓰던 컬럼)
-    needed = (
-        [f"model_type_{m}" for m in ["ICE","HEV","EV"]] +
-        [f"stage_{s}"      for s in range(1,6)] +
-        [f"opt_{i}_only4"  for i in range(1,6)]
+    # 누락된 컬럼 채우기
+    required_cols = (
+        [f"model_type_{m}" for m in ["ICE", "HEV", "EV"]] +
+        [f"stage_{s}" for s in range(1, 6)] +
+        [f"opt_{i}_only4" for i in range(1, 6)]
     )
-    for col in needed:
-        if col not in df_feat.columns:
-            df_feat[col] = 0
-    df_feat = df_feat[needed]
+    for col in required_cols:
+        if col not in df.columns:
+            df[col] = 0
+    df = df[required_cols]
 
     # 예측
-    preds = model_pipe.predict(df_feat)
+    durations = model_pipe.predict(df)
 
-    # 결과 포맷
-    results = [
-        {"stage": s, "pred_duration_h": round(float(pred), 3)}
-        for s, pred in zip(range(1,6), preds)
-    ]
-    return jsonify(results)
+    # delay 합산
+    results = []
+    total = 0.0
+    for stage, base_duration in zip(range(1, 6), durations):
+        delay = avg_delay_dict.get((model_type, stage), 0.0)
+        total_duration = base_duration + delay
+        results.append({
+            "stage": stage,
+            "pred_duration_h": round(float(base_duration), 3),
+            "transport_delay_h": round(delay, 3),
+            "total_with_delay_h": round(total_duration, 3)
+        })
+        total += total_duration
+
+    return jsonify({
+        "stages": results,
+        "total_duration_h": round(total, 3)
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
