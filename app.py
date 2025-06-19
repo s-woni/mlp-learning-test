@@ -1,8 +1,13 @@
 from flask import Flask, request, jsonify
-import joblib, json, pandas as pd
+import joblib
+import json
+import pandas as pd
+import os
+from datetime import datetime
 
 app = Flask(__name__)
-model_pipe = joblib.load("mlp_single_custom.pkl")
+MODEL_PATH = "mlp_single_custom.pkl"
+model_pipe = joblib.load(MODEL_PATH)
 
 # 모델+공정별 평균 유통시간
 avg_delay_dict = {
@@ -77,5 +82,39 @@ def predict_all():
         "total_duration_h": round(total, 3)
     })
 
+# 모델 리로드 함수
+def reload_model():
+    global model_pipe
+    model_pipe = joblib.load(MODEL_PATH)
+    print("[Flask] 모델 리로드 완료")
+
+# 모델 업로드 엔드포인트
+@app.route("/upload", methods=["POST"])
+def upload_model():
+    file = request.files.get("model")
+    if not file:
+        return jsonify({"error": "파일이 없습니다."}), 400
+
+    # 1. 버전용 파일명으로 저장 (날짜 기반)
+    now_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    versioned_path = f"models/mlp_model_{now_str}.pkl"
+    os.makedirs("models", exist_ok=True)
+    file.save(versioned_path)
+
+    # 2. 최신 모델 복사 (또는 심볼릭 링크)
+    latest_path = MODEL_PATH  # "mlp_single_custom.pkl"
+    import shutil
+    shutil.copy(versioned_path, latest_path)
+
+    # 3. 모델 리로드
+    reload_model()
+
+    return jsonify({
+        "message": "모델 업로드 및 리로드 완료",
+        "saved_as": versioned_path
+    }), 200
+
 if __name__ == "__main__":
+    if os.path.exists(MODEL_PATH):
+        reload_model()
     app.run(host="0.0.0.0", port=10000)
