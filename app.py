@@ -9,7 +9,7 @@ app = Flask(__name__)
 MODEL_PATH = "mlp_single_custom.pkl"
 model_pipe = joblib.load(MODEL_PATH)
 
-# 모델+공정별 평균 유통시간
+# 모델+공정별 평균 유통시간 하드코딩
 avg_delay_dict = {
     ('ICE', 2): 22.3688,   ('ICE', 3): 17.3992,   ('ICE', 4): 15.981,    ('ICE', 5): 16.0512,
     ('HEV', 2): 22.4633,   ('HEV', 3): 17.2794,   ('HEV', 4): 15.7819,   ('HEV', 5): 14.8167,
